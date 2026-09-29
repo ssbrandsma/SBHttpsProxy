@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.10)
+project(sbproxy C)
+find_package(CURL REQUIRED)
+find_package(Threads REQUIRED)
+add_executable(sbproxy sbproxy.c)
+target_link_libraries(sbproxy PRIVATE CURL::libcurl Threads::Threads)
+target_compile_definitions(sbproxy PRIVATE _GNU_SOURCE)

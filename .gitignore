@@ -1,0 +1,8 @@
+/build/
+/dist/
+/sbproxy
+/sbproxy-asan
+/sbproxy.release
+/build-native-warnings.txt
+/.pytest_cache/
+__pycache__/
