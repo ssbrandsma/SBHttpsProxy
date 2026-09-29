@@ -4,6 +4,7 @@ import http.server
 import json
 import os
 import pathlib
+import shlex
 import socket
 import ssl
 import subprocess
@@ -13,7 +14,8 @@ import time
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-PROXY = ROOT / "sbproxy"
+PROXY = pathlib.Path(os.environ.get("SBPROXY_BINARY", ROOT / "sbproxy"))
+PROXY_RUNNER = shlex.split(os.environ.get("SBPROXY_RUNNER", ""))
 UPSTREAM_PORT = 19443
 PROXY_PORT = 18765
 BINARY = bytes(range(256)) * 8
@@ -111,7 +113,7 @@ class ProxyIntegration(unittest.TestCase):
         cls.server.socket = context.wrap_socket(cls.server.socket, server_side=True)
         cls.server_thread = threading.Thread(target=cls.server.serve_forever, daemon=True); cls.server_thread.start()
         cls.log = open(pathlib.Path(cls.temp.name) / "proxy.log", "wb")
-        cls.proxy = subprocess.Popen([str(PROXY), "--listen", f"127.0.0.1:{PROXY_PORT}", "--ca-bundle", str(cls.cert)], stdout=cls.log, stderr=cls.log)
+        cls.proxy = subprocess.Popen(PROXY_RUNNER + [str(PROXY), "--listen", f"127.0.0.1:{PROXY_PORT}", "--ca-bundle", str(cls.cert)], stdout=cls.log, stderr=cls.log)
         for _ in range(50):
             try:
                 c = http.client.HTTPConnection("127.0.0.1", PROXY_PORT, timeout=.2); c.request("GET", "/health"); c.getresponse().read(); c.close(); break
@@ -132,7 +134,7 @@ class ProxyIntegration(unittest.TestCase):
         self.assertEqual(r.status,200); self.assertIn("libcurl:",body); self.assertIn("TLS:",body)
 
     def test_non_loopback_listener_is_rejected(self):
-        result=subprocess.run([str(PROXY),"--listen","0.0.0.0:19999"],capture_output=True,text=True)
+        result=subprocess.run(PROXY_RUNNER+[str(PROXY),"--listen","0.0.0.0:19999"],capture_output=True,text=True)
         self.assertEqual(result.returncode,2);self.assertIn("only accepts",result.stderr)
 
     def test_get_binary_and_headers(self):
@@ -167,7 +169,7 @@ class ProxyIntegration(unittest.TestCase):
         for name in ("icy-name","icy-genre","icy-url","icy-br","icy-metaint"): self.assertIn(name,headers)
 
     def test_untrusted_certificate_rejected(self):
-        p=subprocess.Popen([str(PROXY),"--listen","127.0.0.1:18766"],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        p=subprocess.Popen(PROXY_RUNNER+[str(PROXY),"--listen","127.0.0.1:18766"],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         try:
             time.sleep(.15);c=http.client.HTTPConnection("127.0.0.1",18766,timeout=5);c.request("GET",f"/https/localhost:{UPSTREAM_PORT}/binary");r=c.getresponse();r.read();self.assertEqual(r.status,502);c.close()
         finally: p.terminate();p.wait(timeout=5)
