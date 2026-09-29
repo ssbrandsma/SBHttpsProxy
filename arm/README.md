@@ -74,3 +74,90 @@ revision 4, Linux 2.6.26.8-rt16, and 62 MB RAM:
 * Idle RSS: about 220 KiB; RSS after the first HTTPS request: about 924 KiB.
 
 Audio playback and Jive applet lifecycle remain separate device milestones.
+
+## Deploy an updated proxy to the Radio
+
+The current device deployment is a standalone localhost service in `/tmp`;
+the HTTPSProxy Jive applet is not installed yet. Because `/tmp` is a RAM
+filesystem, both files and the process disappear at reboot. This is suitable
+for native helper testing, but it is not a persistent installation.
+
+Current OpenSSH clients need the Radio's legacy algorithms, and `scp -O` is
+needed for its legacy SCP server. In PowerShell, calculate local hashes and
+copy both the helper and current CA bundle:
+
+```powershell
+Get-FileHash -Algorithm MD5 .\build\arm\sbproxy, .\certs\cacert.pem
+
+scp -O `
+    -o PreferredAuthentications=password `
+    -o PubkeyAuthentication=no `
+    -o KexAlgorithms=+diffie-hellman-group1-sha1 `
+    -o HostKeyAlgorithms=+ssh-rsa `
+    -o Ciphers=+aes128-cbc `
+    -o MACs=+hmac-sha1 `
+    .\build\arm\sbproxy .\certs\cacert.pem `
+    root@RADIO_IP:/tmp/
+
+ssh -o PreferredAuthentications=password `
+    -o PubkeyAuthentication=no `
+    -o KexAlgorithms=+diffie-hellman-group1-sha1 `
+    -o HostKeyAlgorithms=+ssh-rsa `
+    -o Ciphers=+aes128-cbc `
+    -o MACs=+hmac-sha1 `
+    root@RADIO_IP
+```
+
+On the Radio, compare `md5sum` with the two local values before starting the
+files. This SqueezeOS image has `md5sum`, but not `cksum` or `sha256sum`.
+
+```sh
+set -e
+md5sum /tmp/sbproxy /tmp/cacert.pem
+chmod 755 /tmp/sbproxy
+
+if test -s /tmp/sbproxy.pid; then
+    kill `cat /tmp/sbproxy.pid` 2>/dev/null || true
+fi
+killall sbproxy 2>/dev/null || true
+rm -f /tmp/sbproxy.pid /tmp/sbproxy.log
+```
+
+Start the localhost service, record its PID, and verify health, loopback-only
+binding, and a real HTTPS request:
+
+```sh
+/tmp/sbproxy --listen 127.0.0.1:8765 \
+    --ca-bundle /tmp/cacert.pem \
+    >/tmp/sbproxy.log 2>&1 &
+echo $! >/tmp/sbproxy.pid
+sleep 2
+
+wget -q -O /tmp/health.txt http://127.0.0.1:8765/health
+cat /tmp/health.txt
+netstat -ltn 2>/dev/null | grep '127.0.0.1:8765'
+wget -q -O /tmp/example.html \
+    http://127.0.0.1:8765/https/example.com/
+grep 'Example Domain' /tmp/example.html
+cat /tmp/sbproxy.pid
+ps | grep '[s]bproxy'
+tail -n 80 /tmp/sbproxy.log
+```
+
+The service is now available to local clients at `127.0.0.1:8765`. Response
+scratch files can be removed without stopping it:
+
+```sh
+rm -f /tmp/health.txt /tmp/example.html
+```
+
+Stop the standalone service with:
+
+```sh
+kill `cat /tmp/sbproxy.pid` 2>/dev/null || true
+rm -f /tmp/sbproxy.pid
+```
+
+Once the Jive applet is packaged and installed, it will instead own a
+persistent helper beneath its applet directory and supervise the process using
+`/tmp/httpsproxy.pid` and `/tmp/httpsproxy.log`.
