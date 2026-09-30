@@ -1,9 +1,11 @@
+local io, os, tonumber, tostring, type = io, os, tonumber, tostring, type
 local oo = require("loop.simple")
 local Timer = require("jive.ui.Timer")
 local SocketHttp = require("jive.net.SocketHttp")
 local RequestHttp = require("jive.net.RequestHttp")
 local lfs = require("lfs")
 local log = require("jive.utils.log").logger("HTTPSProxy")
+local jnt = jnt
 module(...)
 oo.class(_M)
 local PORT=8765
