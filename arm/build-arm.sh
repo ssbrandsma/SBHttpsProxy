@@ -12,6 +12,7 @@ PREFIX="$ROOT/build/arm/prefix"
 WOLFSSL_SOURCE="$ROOT/build/vendor-arm/wolfssl-5.8.2-stable"
 CURL_SOURCE="$ROOT/build/vendor/curl-8.18.0"
 COMMON_FLAGS="-Os -marm -march=armv5te -mtune=arm926ej-s -mfloat-abi=soft -ffunction-sections -fdata-sections"
+WOLFSSL_FLAGS="$COMMON_FLAGS -DWOLFSSL_NO_ASN_STRICT"
 
 mkdir -p "$ROOT/build/arm"
 
@@ -22,7 +23,8 @@ rm -rf "$ROOT/build/arm/wolfssl-build" "$ROOT/build/arm/curl-build" "$PREFIX"
     -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=arm \
     -DCMAKE_C_COMPILER="$CC" -DCMAKE_AR="$AR" -DCMAKE_RANLIB="$RANLIB" \
     -DCMAKE_INSTALL_PREFIX="$PREFIX" -DCMAKE_BUILD_TYPE=MinSizeRel \
-    -DCMAKE_C_FLAGS="$COMMON_FLAGS" -DBUILD_SHARED_LIBS:BOOL=OFF \
+    -DCMAKE_C_FLAGS="$WOLFSSL_FLAGS" -DBUILD_SHARED_LIBS:BOOL=OFF \
+    -DWOLFSSL_ALT_CERT_CHAINS:BOOL=ON \
     -DWOLFSSL_CURL:BOOL=ON -DWOLFSSL_TLS13:BOOL=ON -DWOLFSSL_DTLS:BOOL=OFF \
     -DWOLFSSL_EXAMPLES:BOOL=OFF -DWOLFSSL_CRYPT_TESTS:BOOL=OFF
 "$CMAKE" --build "$ROOT/build/arm/wolfssl-build" -j2

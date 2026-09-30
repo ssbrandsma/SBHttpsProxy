@@ -48,6 +48,14 @@ Components:
 * wolfSSL 5.8.2 static, curl compatibility, TLS 1.2 and TLS 1.3 enabled.
 * curl 8.18.0 static with wolfSSL; HTTP/HTTPS are the required protocols.
 
+wolfSSL is compiled with `WOLFSSL_NO_ASN_STRICT` and
+`WOLFSSL_ALT_CERT_CHAINS` for compatibility with unusual public certificate
+chains. In addition, sbproxy deliberately disables peer-certificate and
+hostname verification. This works around the GoDaddy R1 chain currently
+served by StreamTheWorld, which wolfSSL 5.8.2 rejects with `ASN_PARSE_E` or
+`ASN_SIG_CONFIRM_E`. TLS traffic remains encrypted, but the upstream server
+is not authenticated and an on-path attacker can impersonate it.
+
 The resulting files are `build/arm/sbproxy-arm-probe` and
 `build/arm/sbproxy`. Both are static EABI5 soft-float executables. The proxy
 passes the native 14-test HTTPS integration suite under `qemu-arm -cpu
@@ -77,17 +85,16 @@ Audio playback and Jive applet lifecycle remain separate device milestones.
 
 ## Deploy an updated proxy to the Radio
 
-The current device deployment is a standalone localhost service in `/tmp`;
-the HTTPSProxy Jive applet is not installed yet. Because `/tmp` is a RAM
-filesystem, both files and the process disappear at reboot. This is suitable
-for native helper testing, but it is not a persistent installation.
+HTTPSProxy is installed persistently at
+`/usr/share/jive/applets/HTTPSProxy`. Its service uses
+`/tmp/httpsproxy.pid` and `/tmp/httpsproxy.log` at runtime.
 
 Current OpenSSH clients need the Radio's legacy algorithms, and `scp -O` is
 needed for its legacy SCP server. In PowerShell, calculate local hashes and
-copy both the helper and current CA bundle:
+stage the helper under a temporary name in the installed applet:
 
 ```powershell
-Get-FileHash -Algorithm MD5 .\build\arm\sbproxy, .\certs\cacert.pem
+Get-FileHash -Algorithm MD5 .\build\arm\sbproxy
 
 scp -O `
     -o PreferredAuthentications=password `
@@ -96,8 +103,8 @@ scp -O `
     -o HostKeyAlgorithms=+ssh-rsa `
     -o Ciphers=+aes128-cbc `
     -o MACs=+hmac-sha1 `
-    .\build\arm\sbproxy .\certs\cacert.pem `
-    root@RADIO_IP:/tmp/
+    .\build\arm\sbproxy `
+    root@RADIO_IP:/usr/share/jive/applets/HTTPSProxy/bin/sbproxy.next
 
 ssh -o PreferredAuthentications=password `
     -o PubkeyAuthentication=no `
@@ -108,56 +115,50 @@ ssh -o PreferredAuthentications=password `
     root@RADIO_IP
 ```
 
-On the Radio, compare `md5sum` with the two local values before starting the
-files. This SqueezeOS image has `md5sum`, but not `cksum` or `sha256sum`.
+On the Radio, compare `md5sum` with the local value before stopping anything.
+This SqueezeOS image has `md5sum`, but not `cksum` or `sha256sum`. The root
+filesystem is small, so keep the rollback copy in the `/tmp` RAM filesystem.
 
 ```sh
 set -e
-md5sum /tmp/sbproxy /tmp/cacert.pem
-chmod 755 /tmp/sbproxy
+APPLET=/usr/share/jive/applets/HTTPSProxy
+md5sum "$APPLET/bin/sbproxy.next"
+chmod 755 "$APPLET/bin/sbproxy.next"
+cp "$APPLET/bin/sbproxy" /tmp/sbproxy.previous
 
-if test -s /tmp/sbproxy.pid; then
-    kill `cat /tmp/sbproxy.pid` 2>/dev/null || true
-fi
+pid=`cat /tmp/httpsproxy.pid 2>/dev/null || true`
+if test -n "$pid"; then kill "$pid" 2>/dev/null || true; fi
+sleep 1
 killall sbproxy 2>/dev/null || true
-rm -f /tmp/sbproxy.pid /tmp/sbproxy.log
-```
 
-Start the localhost service, record its PID, and verify health, loopback-only
-binding, and a real HTTPS request:
-
-```sh
-/tmp/sbproxy --listen 127.0.0.1:8765 \
-    --ca-bundle /tmp/cacert.pem \
-    >/tmp/sbproxy.log 2>&1 &
-echo $! >/tmp/sbproxy.pid
+rm -f "$APPLET/bin/sbproxy"
+mv "$APPLET/bin/sbproxy.next" "$APPLET/bin/sbproxy"
+"$APPLET/bin/sbproxy" --listen 127.0.0.1:8765 \
+    --ca-bundle "$APPLET/certs/cacert.pem" \
+    >>/tmp/httpsproxy.log 2>&1 &
+echo $! >/tmp/httpsproxy.pid
 sleep 2
 
-wget -q -O /tmp/health.txt http://127.0.0.1:8765/health
-cat /tmp/health.txt
+wget -q -O - http://127.0.0.1:8765/health
 netstat -ltn 2>/dev/null | grep '127.0.0.1:8765'
-wget -q -O /tmp/example.html \
-    http://127.0.0.1:8765/https/example.com/
-grep 'Example Domain' /tmp/example.html
-cat /tmp/sbproxy.pid
+wget -q -O /tmp/radio538.mp3 \
+    http://127.0.0.1:8765/https/25583.live.streamtheworld.com:443/RADIO538.mp3 &
+wpid=$!
+sleep 6
+kill "$wpid" 2>/dev/null || true
+wc -c /tmp/radio538.mp3
+rm -f /tmp/radio538.mp3
+cat /tmp/httpsproxy.pid
 ps | grep '[s]bproxy'
-tail -n 80 /tmp/sbproxy.log
+tail -n 80 /tmp/httpsproxy.log
 ```
 
-The service is now available to local clients at `127.0.0.1:8765`. Response
-scratch files can be removed without stopping it:
+Reconnect over SSH and repeat the health and process checks to confirm that
+the detached service survived the deployment session. If rollback is needed
+before reboot, stop the service, copy `/tmp/sbproxy.previous` back to the
+applet's `bin/sbproxy`, and start it with the same command. The backup in
+`/tmp` is lost at reboot.
 
 ```sh
-rm -f /tmp/health.txt /tmp/example.html
+rm -f /tmp/sbproxy.previous
 ```
-
-Stop the standalone service with:
-
-```sh
-kill `cat /tmp/sbproxy.pid` 2>/dev/null || true
-rm -f /tmp/sbproxy.pid
-```
-
-Once the Jive applet is packaged and installed, it will instead own a
-persistent helper beneath its applet directory and supervise the process using
-`/tmp/httpsproxy.pid` and `/tmp/httpsproxy.log`.
