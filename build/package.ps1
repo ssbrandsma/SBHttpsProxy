@@ -46,10 +46,23 @@ try {
     Copy-Item -LiteralPath $CaBundle -Destination (Join-Path $Stage 'certs/cacert.pem')
 
     Remove-Item -LiteralPath $ZipPath -Force -ErrorAction SilentlyContinue
-    $PackagePaths = @($RootFiles) + @('bin', 'certs')
-    Push-Location $Stage
-    try { Compress-Archive -Path $PackagePaths -DestinationPath $ZipPath -CompressionLevel Optimal }
-    finally { Pop-Location }
+    Add-Type -AssemblyName System.IO.Compression
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $Archive = [IO.Compression.ZipFile]::Open($ZipPath, [IO.Compression.ZipArchiveMode]::Create)
+    try {
+        foreach ($File in $RootFiles) {
+            [IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+                $Archive, (Join-Path $Stage $File), $File,
+                [IO.Compression.CompressionLevel]::Optimal) | Out-Null
+        }
+        [IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+            $Archive, (Join-Path $Stage 'bin/sbproxy'), 'bin/sbproxy',
+            [IO.Compression.CompressionLevel]::Optimal) | Out-Null
+        [IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+            $Archive, (Join-Path $Stage 'certs/cacert.pem'), 'certs/cacert.pem',
+            [IO.Compression.CompressionLevel]::Optimal) | Out-Null
+    }
+    finally { $Archive.Dispose() }
 }
 finally {
     if (Test-Path -LiteralPath $StageRoot) { Remove-Item -LiteralPath $StageRoot -Recurse -Force }
@@ -57,12 +70,14 @@ finally {
 
 $Archive = [IO.Compression.ZipFile]::OpenRead($ZipPath)
 try {
-    $Entries = @($Archive.Entries | Where-Object { -not $_.FullName.EndsWith('/') } | ForEach-Object { $_.FullName.Replace([char]92, '/') })
+	$RawEntries = @($Archive.Entries | Where-Object { -not $_.FullName.EndsWith('/') } | ForEach-Object FullName)
 }
 finally { $Archive.Dispose() }
+$BackslashEntries = @($RawEntries | Where-Object { $_.Contains([char]92) })
+$Entries = $RawEntries
 $Unexpected = @($Entries | Where-Object { $_ -notin $ExpectedEntries })
 $Missing = @($ExpectedEntries | Where-Object { $_ -notin $Entries })
-if ($Unexpected.Count -or $Missing.Count) {
+if ($BackslashEntries.Count -or $Unexpected.Count -or $Missing.Count) {
     throw "Unexpected ZIP layout. Entries: $($Entries -join ', ')"
 }
 
@@ -73,8 +88,8 @@ $Xml = @"
 <extensions>
   <details><title lang="EN">SBHttpsProxy Applet Repository</title></details>
   <applets>
-    <applet name="HTTPSProxy" version="$Version" target="baby" minTarget="7.7" maxTarget="*"><title lang="EN">HTTPS Proxy</title><desc lang="EN">Local HTTPS-to-HTTP streaming proxy for Squeezebox Radio applets.</desc><changes lang="EN">Initial Applet Installer release with static ARM proxy and current CA bundle.</changes><creator>Sjoerd Brandsma</creator><url>$ZipUrl</url><sha>$ZipSha1</sha></applet>
-    <applet name="HTTPSProxy" version="$Version" target="fab4" minTarget="7.7" maxTarget="*"><title lang="EN">HTTPS Proxy</title><desc lang="EN">Local HTTPS-to-HTTP streaming proxy for Squeezebox Touch applets.</desc><changes lang="EN">Initial Applet Installer release with static ARM proxy and current CA bundle.</changes><creator>Sjoerd Brandsma</creator><url>$ZipUrl</url><sha>$ZipSha1</sha></applet>
+    <applet name="HTTPSProxy" version="$Version" target="baby" minTarget="7.7" maxTarget="*"><title lang="EN">HTTPS Proxy</title><desc lang="EN">Local HTTPS-to-HTTP streaming proxy for Squeezebox Radio applets.</desc><changes lang="EN">Add StreamTheWorld HTTPS compatibility and updated ARM proxy.</changes><creator>Sjoerd Brandsma</creator><url>$ZipUrl</url><sha>$ZipSha1</sha></applet>
+    <applet name="HTTPSProxy" version="$Version" target="fab4" minTarget="7.7" maxTarget="*"><title lang="EN">HTTPS Proxy</title><desc lang="EN">Local HTTPS-to-HTTP streaming proxy for Squeezebox Touch applets.</desc><changes lang="EN">Add StreamTheWorld HTTPS compatibility and updated ARM proxy.</changes><creator>Sjoerd Brandsma</creator><url>$ZipUrl</url><sha>$ZipSha1</sha></applet>
   </applets>
 </extensions>
 "@
