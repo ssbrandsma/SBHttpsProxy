@@ -1,4 +1,5 @@
-/build/
+/build/*
+!/build/package.ps1
 /dist/
 /sbproxy
 /sbproxy-asan

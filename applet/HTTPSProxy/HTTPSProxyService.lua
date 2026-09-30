@@ -17,6 +17,7 @@ function _health(self, cb) local r=RequestHttp(function(data,err) local ok=data 
 function start(self)
  if self:_pidRunning() then self:_health();return true end
  if not lfs.attributes(self.bin,"mode") then log:error("missing helper: ",self.bin);return false end
+ os.execute("chmod 755 "..q(self.bin))
  local cmd="( "..q(self.bin).." --listen 127.0.0.1:8765 --ca-bundle "..q(self.root.."/certs/cacert.pem").." >>/tmp/httpsproxy.log 2>&1 & echo $! >"..q(self.pid).." )"
  os.execute(cmd); Timer(300,function() self:_health() end,true):start(); return true
 end
